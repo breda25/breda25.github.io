@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Visitor Log</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- JetBrains Mono -->
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark light;
+      --bg: #0b0e14;
+      --fg: #e6e1cf;
+      --muted: #a0a4ab;
+      --card: #11151c;
+      --accent: #7aa2f7;
+      --danger: #ef6b73;
+      --ok: #9ece6a;
+      --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+    html, body {
+      margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+      font-family: var(--mono); font-size: 14px;
+    }
+    header { padding: 20px; border-bottom: 1px solid #1a2030; }
+    h1 { margin: 0; font-size: 18px; letter-spacing: 0.5px; }
+    main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    input, select, button {
+      background: var(--card); color: var(--fg); border: 1px solid #22283a;
+      padding: 8px 10px; border-radius: 6px; font-family: var(--mono);
+    }
+    button { cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1a2030; vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    .pill { padding: 2px 6px; border: 1px solid #2a3145; border-radius: 4px; background: #0e1320; color: var(--muted); display: inline-block; }
+    .ip { color: var(--accent); font-weight: 600; }
+    .ua { color: #c0caf5; }
+    .ts { color: var(--muted); }
+    .geo { color: #9ece6a; }
+    .muted { color: var(--muted); }
+    .nowrap { white-space: nowrap; }
+    .wrap { word-break: break-word; }
+    .small { font-size: 12px; }
+    .hint { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Visitor Log · JetBrains Mono</h1>
+  </header>
+  <main>
+    <div class="row">
+      <input id="search" type="search" placeholder="Filter: IP, country, UA, referrer, page…" size="40" />
+      <select id="limit">
+        <option value="50">Last 50</option>
+        <option value="100" selected>Last 100</option>
+        <option value="200">Last 200</option>
+        <option value="500">Last 500</option>
+      </select>
+      <button id="refresh">Refresh</button>
+      <span id="status" class="hint"></span>
+    </div>
+
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th class="nowrap">Time (UTC)</th>
+          <th>IP · Geo</th>
+          <th>User Agent</th>
+          <th>Page · Referrer</th>
+          <th>Client</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p class="hint small">Note: This demo stores data in a JSON file on your server. Add consent banners and retention policies for production use.</p>
+  </main>
+
+  <script>
+    const api = location.origin; // same origin in this simple setup
+
+    function isoToUtc(iso) {
+      try { return new Date(iso).toISOString().replace('T', ' ').replace('Z', 'Z'); }
+      catch { return iso; }
+    }
+    function countryFlag(cc) {
+      if (!cc || cc.length !== 2) return '';
+      const code = cc.toUpperCase();
+      const A = 0x1F1E6;
+      return String.fromCodePoint(...[...code].map(c => A + c.charCodeAt(0) - 65));
+    }
+
+    async function trackVisit() {
+      const body = {
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        languages: navigator.languages || [navigator.language].filter(Boolean),
+        screen: `${window.screen.width}x${window.screen.height}@${window.devicePixelRatio || 1}`,
+        referrer: document.referrer || null,
+        page: location.pathname + location.search,
+      };
+      try {
+        await fetch(`${api}/api/track`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        console.warn('track error', e);
+      }
+    }
+
+    function render(rows) {
+      const q = (document.getElementById('search').value || '').toLowerCase();
+      const tbody = document.querySelector('#tbl tbody');
+      tbody.innerHTML = '';
+      const filtered = rows.filter(r => {
+        const s = [
+          r.ip,
+          r.geo?.country, r.geo?.region, r.geo?.city, r.geo?.country_code, r.geo?.org,
+          r.ua, r.referrer, r.page, r.tz, (r.languages || []).join(',')
+        ].join(' ').toLowerCase();
+        return !q || s.includes(q);
+      });
+
+      for (const r of filtered) {
+        const tr = document.createElement('tr');
+
+        const tdTs = document.createElement('td');
+        tdTs.className = 'ts nowrap';
+        tdTs.textContent = isoToUtc(r.ts);
+        tr.appendChild(tdTs);
+
+        const tdIp = document.createElement('td');
+        tdIp.className = 'wrap';
+        const parts = [];
+        if (r.ip) parts.push(`<span class="ip">${r.ip}</span>`);
+        const geoBits = [];
+        if (r.geo?.country_code) geoBits.push(`${countryFlag(r.geo.country_code)} ${r.geo.country || r.geo.country_code}`);
+        if (r.geo?.region) geoBits.push(r.geo.region);
+        if (r.geo?.city) geoBits.push(r.geo.city);
+        if (r.geo?.org) geoBits.push(`<span class="pill">${r.geo.org}</span>`);
+        if (geoBits.length) parts.push(`<div class="geo small">${geoBits.join(' · ')}</div>`);
+        tdIp.innerHTML = parts.join('');
+        tr.appendChild(tdIp);
+
+        const tdUa = document.createElement('td');
+        tdUa.className = 'ua small wrap';
+        tdUa.textContent = r.ua || '';
+        tr.appendChild(tdUa);
+
+        const tdPage = document.createElement('td');
+        tdPage.className = 'small wrap';
+        tdPage.innerHTML = [
+          r.page ? `<div><span class="pill">Page</span> ${r.page}</div>` : '',
+          r.referrer ? `<div><span class="pill">Ref</span> ${r.referrer}</div>` : ''
+        ].join('');
+        tr.appendChild(tdPage);
+
+        const tdClient = document.createElement('td');
+        tdClient.className = 'small wrap';
+        const cl = [];
+        if (r.tz) cl.push(`<span class="pill">TZ</span> ${r.tz}`);
+        if (r.screen) cl.push(`<span class="pill">Screen</span> ${r.screen}`);
+        if (r.languages?.length) cl.push(`<span class="pill">Lang</span> ${r.languages.join(', ')}`);
+        tdClient.innerHTML = cl.join('<br/>');
+        tr.appendChild(tdClient);
+
+        tbody.appendChild(tr);
+      }
+
+      document.getElementById('status').textContent = `Showing ${filtered.length} of ${rows.length}`;
+    }
+
+    async function loadVisitors() {
+      const limit = document.getElementById('limit').value;
+      document.getElementById('status').textContent = 'Loading…';
+      const res = await fetch(`${api}/api/visitors?limit=${encodeURIComponent(limit)}`);
+      const data = await res.json();
+      render(Array.isArray(data) ? data : []);
+    }
+
+    document.getElementById('refresh').addEventListener('click', loadVisitors);
+    document.getElementById('limit').addEventListener('change', loadVisitors);
+    document.getElementById('search').addEventListener('input', loadVisitors);
+
+    // Boot
+    (async () => {
+      await trackVisit();
+      await loadVisitors();
+      // Auto-refresh every 15s
+      setInterval(loadVisitors, 15000);
+    })();
+  </script>
+</body>
+</html>
